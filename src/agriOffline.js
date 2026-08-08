@@ -3,7 +3,13 @@ import { enqueueMutation, getPendingMutations, removePendingMutation } from './o
 
 const offline = () => typeof navigator !== 'undefined' && !navigator.onLine;
 let remoteRpc = (...args) => supabase.rpc(...args);
-const announce = (message) => window.dispatchEvent(new CustomEvent('abcs:toast', { detail: { message } }));
+const announce = (message, type = 'success') => window.dispatchEvent(new CustomEvent('abcs:toast', { detail: { message, type } }));
+
+// This is deliberately a small user-experience guard, not a security boundary.
+// The real request limits belong at Supabase/Vercel because browser code can be
+// bypassed by someone calling the Supabase API directly.
+const lastSaveByUserAndAction = new Map();
+const SAVE_COOLDOWN_MS = 900;
 
 export function configureAgriRpc(fn) {
   remoteRpc = fn;
@@ -12,6 +18,14 @@ export function configureAgriRpc(fn) {
 export async function postRpc(name, args) {
   const { data: { session } } = await supabase.auth.getSession();
   if (!session?.user?.id) return { data: null, error: { message: 'Please sign in before saving an entry.' } };
+  const actionKey = `${session.user.id}:${name}`;
+  const now = Date.now();
+  const lastSaveAt = lastSaveByUserAndAction.get(actionKey) || 0;
+  if (now - lastSaveAt < SAVE_COOLDOWN_MS) {
+    announce('Please wait a moment before saving the same entry again.', 'warning');
+    return { data: null, error: { message: 'Please wait a moment, then try again.' } };
+  }
+  lastSaveByUserAndAction.set(actionKey, now);
   if (!offline()) {
     try {
       const result = await remoteRpc(name, args);
