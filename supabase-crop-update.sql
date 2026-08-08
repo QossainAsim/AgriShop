@@ -1,0 +1,17 @@
+-- Run after supabase-finance-update.sql.
+create or replace function public.record_crop_receipt(p_date date, p_source public.stock_source, p_party_id uuid, p_product_id uuid, p_quantity numeric, p_unit public.quantity_unit, p_quantity_kg numeric, p_rate numeric, p_paid numeric default 0, p_cash_account_id uuid default null, p_notes text default null) returns uuid language plpgsql as $$
+declare v_total numeric := p_quantity * p_rate; v_receipt uuid; v_item uuid; v_journal uuid; v_cash_code text; v_cash_account uuid; v_inventory uuid; v_cash_id uuid; v_payable uuid; v_capital uuid;
+begin
+  if p_quantity <= 0 or p_quantity_kg <= 0 or p_rate < 0 or p_paid < 0 or p_paid > v_total then raise exception 'Check quantity, rate, and paid amount'; end if;
+  insert into public.stock_receipts (receipt_date, source, party_id, total_amount, paid_amount, notes) values (p_date, p_source, p_party_id, v_total, p_paid, p_notes) returning id into v_receipt;
+  insert into public.stock_receipt_items (receipt_id, product_id, quantity, unit, quantity_kg, rate_per_unit, line_total) values (v_receipt, p_product_id, p_quantity, p_unit, p_quantity_kg, p_rate, v_total) returning id into v_item;
+  insert into public.inventory_movements (movement_date, product_id, quantity_in_kg, unit_cost_per_kg, source_type, source_id, notes) values (p_date, p_product_id, p_quantity_kg, case when p_quantity_kg > 0 then v_total / p_quantity_kg else 0 end, 'stock_receipt', v_item, p_notes);
+  select id into v_inventory from public.chart_of_accounts where code = '1100'; select id into v_payable from public.chart_of_accounts where code = '2000'; select id into v_capital from public.chart_of_accounts where code = '3000';
+  if p_paid > 0 then select account_code into v_cash_code from public.cash_accounts where id = p_cash_account_id; select id into v_cash_account from public.chart_of_accounts where code = v_cash_code; end if;
+  insert into public.journal_entries (entry_date, narration, source_type, source_id) values (p_date, coalesce(p_notes, 'Crop received'), 'stock_receipt', v_receipt) returning id into v_journal;
+  insert into public.journal_lines (journal_entry_id, account_id, debit, credit) values (v_journal, v_inventory, v_total, 0);
+  if p_paid > 0 then insert into public.journal_lines (journal_entry_id, account_id, party_id, debit, credit) values (v_journal, v_cash_account, p_party_id, 0, p_paid); insert into public.cash_transactions (transaction_date, cash_account_id, direction, amount, party_id, transaction_type, journal_entry_id, notes) values (p_date, p_cash_account_id, 'out', p_paid, p_party_id, 'crop_purchase', v_journal, p_notes) returning id into v_cash_id; end if;
+  if v_total - p_paid > 0 and p_source = 'own_harvest' and p_party_id is null then insert into public.journal_lines (journal_entry_id, account_id, debit, credit) values (v_journal, v_capital, 0, v_total - p_paid); elsif v_total - p_paid > 0 then insert into public.journal_lines (journal_entry_id, account_id, party_id, debit, credit) values (v_journal, v_payable, p_party_id, 0, v_total - p_paid); insert into public.party_ledger_entries (entry_date, party_id, balance_type, effect, amount, entry_type, source_type, source_id, notes) values (p_date, p_party_id, 'payable', 'increase', v_total - p_paid, 'crop_purchase', 'stock_receipt', v_receipt, p_notes); end if;
+  return v_receipt;
+end; $$;
+grant execute on function public.record_crop_receipt(date, public.stock_source, uuid, uuid, numeric, public.quantity_unit, numeric, numeric, numeric, uuid, text) to authenticated;

@@ -14,6 +14,27 @@ import {
 } from 'lucide-react';
 import MobileCard from './MobileCard';
 
+const MenuItem = ({ icon: Icon, label, onClick, color = "blue", badge }) => (
+  <MobileCard onClick={onClick} className="active:scale-95 transition-transform">
+    <div className="flex items-center justify-between">
+      <div className="flex items-center gap-3">
+        <div className={`bg-${color}-100 p-2 rounded-lg`}>
+          {React.createElement(Icon, { className: `w-5 h-5 text-${color}-600` })}
+        </div>
+        <span className="font-semibold text-gray-800">{label}</span>
+      </div>
+      <div className="flex items-center gap-2">
+        {badge && (
+          <span className="bg-blue-100 text-blue-600 px-2 py-1 rounded-full text-xs font-bold">
+            {badge}
+          </span>
+        )}
+        <ChevronRight className="w-5 h-5 text-gray-400" />
+      </div>
+    </div>
+  </MobileCard>
+);
+
 const MobileMore = ({ 
   userEmail,
   onChangePassword,
@@ -26,27 +47,6 @@ const MobileMore = ({
   onImport,
   stats
 }) => {
-  const MenuItem = ({ icon: Icon, label, onClick, color = "blue", badge }) => (
-    <MobileCard onClick={onClick} className="active:scale-95 transition-transform">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className={`bg-${color}-100 p-2 rounded-lg`}>
-            <Icon className={`w-5 h-5 text-${color}-600`} />
-          </div>
-          <span className="font-semibold text-gray-800">{label}</span>
-        </div>
-        <div className="flex items-center gap-2">
-          {badge && (
-            <span className="bg-blue-100 text-blue-600 px-2 py-1 rounded-full text-xs font-bold">
-              {badge}
-            </span>
-          )}
-          <ChevronRight className="w-5 h-5 text-gray-400" />
-        </div>
-      </div>
-    </MobileCard>
-  );
-
   return (
     <div className="space-y-4">
       {/* User Info Card */}

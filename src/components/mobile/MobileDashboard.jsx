@@ -9,9 +9,7 @@ const MobileDashboard = ({
   outOfQuantityMaterials, 
   totalValue, 
   todayRevenue, 
-  todayCommission,
-  totalRevenue,
-  totalCommission 
+  todayCommission
 }) => {
   const todaySales = sales.filter(s => s.date === new Date().toISOString().split('T')[0]);
 

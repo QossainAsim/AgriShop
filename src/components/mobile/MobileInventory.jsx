@@ -8,8 +8,7 @@ const MobileInventory = ({
   onEditPart,
   onDeletePart,  //  NEW PROP
   searchTerm,
-  setSearchTerm,
-  suppliers
+  setSearchTerm
 }) => {
   const [filterCategory, setFilterCategory] = useState('all');
   const [filterQuantity, setFilterQuantity] = useState('all');

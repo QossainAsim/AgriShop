@@ -4,7 +4,6 @@ import MobileCard from './MobileCard';
 
 const MobileProfit = ({ 
   sales, 
-  parts,
   totalCommission, 
   totalRevenue,
   todayCommission,

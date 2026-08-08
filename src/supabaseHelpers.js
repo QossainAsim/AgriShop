@@ -1,307 +1,261 @@
-// supabaseHelpers.js
 import { supabase } from './supabaseClient';
+import {
+  getCachedSnapshot,
+  removeCachedRecord,
+  replaceCachedTable,
+  upsertCachedRecord,
+} from './offlineStore';
+import {
+  isNetworkError,
+  isOffline,
+  queueMutation,
+  startOfflineSync,
+} from './offlineSync';
 
-// ============================================
-// CATEGORIES
-// ============================================
-export const fetchCategories = async () => {
-  const { data, error } = await supabase
-    .from('categories')
-    .select('*')
-    .order('name');
-  
-  if (error) {
-    console.error('Error fetching categories:', error);
-    return [];
-  }
+const createId = () => crypto.randomUUID();
+
+const partFromRow = (part) => ({
+  id: part.id,
+  partNumber: part.part_number,
+  name: part.name,
+  category: part.category,
+  brand: part.brand,
+  purchasePrice: Number(part.purchase_price),
+  sellingPrice: Number(part.selling_price),
+  stock: Number(part.stock),
+  reorderLevel: Number(part.reorder_level),
+  supplier: part.supplier,
+  location: part.location,
+});
+
+const saleFromRow = (sale) => ({
+  id: sale.id,
+  date: sale.date,
+  time: sale.time,
+  partNumber: sale.part_number,
+  partName: sale.part_name,
+  quantity: Number(sale.quantity),
+  purchasePrice: Number(sale.purchase_price),
+  sellingPrice: Number(sale.selling_price),
+  total: Number(sale.total),
+  profit: Number(sale.profit),
+  customer: sale.customer,
+  soldBy: sale.sold_by,
+});
+
+const partPayload = (part, id) => ({
+  id,
+  part_number: part.partNumber,
+  name: part.name,
+  category: part.category,
+  brand: part.brand || '',
+  purchase_price: Number(part.purchasePrice),
+  selling_price: Number(part.sellingPrice),
+  stock: Number(part.stock),
+  reorder_level: Number(part.reorderLevel),
+  supplier: part.supplier || '',
+  location: part.location || '',
+});
+
+const salePayload = (sale, id) => ({
+  id,
+  date: sale.date,
+  time: sale.time,
+  part_number: sale.partNumber,
+  part_name: sale.partName,
+  quantity: Number(sale.quantity),
+  purchase_price: Number(sale.purchasePrice),
+  selling_price: Number(sale.sellingPrice),
+  total: Number(sale.total),
+  profit: Number(sale.profit),
+  customer: sale.customer,
+  sold_by: sale.soldBy || '',
+});
+
+const supplierPayload = (supplier, id) => ({
+  id,
+  name: supplier.name,
+  contact: supplier.contact || '',
+  phone: supplier.phone || '',
+  email: supplier.email || '',
+  address: supplier.address || '',
+});
+
+const partFromPayload = (payload) => partFromRow(payload);
+const saleFromPayload = (payload) => saleFromRow(payload);
+const supplierFromPayload = (payload) => ({ ...payload });
+
+const throwIfError = ({ data, error }) => {
+  if (error) throw error;
   return data;
 };
 
-// ============================================
-// PARTS (INVENTORY)
-// ============================================
-export const fetchParts = async () => {
-  const { data, error } = await supabase
-    .from('parts')
-    .select('*')
-    .order('name');
-  
-  if (error) {
-    console.error('Error fetching parts:', error);
+const remoteAddPart = async (payload) => partFromRow(throwIfError(await supabase
+  .from('parts')
+  .insert(payload)
+  .select()
+  .single()));
+
+const remoteUpdatePart = async (id, payload) => partFromRow(throwIfError(await supabase
+  .from('parts')
+  .update(payload)
+  .eq('id', id)
+  .select()
+  .single()));
+
+const remoteDeletePart = async (id) => throwIfError(await supabase.from('parts').delete().eq('id', id));
+
+const remoteAddSale = async (payload) => saleFromRow(throwIfError(await supabase
+  .from('sales')
+  .insert(payload)
+  .select()
+  .single()));
+
+const remoteDeleteSale = async (id) => throwIfError(await supabase.from('sales').delete().eq('id', id));
+
+const remoteAddSupplier = async (payload) => supplierFromPayload(throwIfError(await supabase
+  .from('suppliers')
+  .insert(payload)
+  .select()
+  .single()));
+
+const remoteUpdateSupplier = async (id, payload) => supplierFromPayload(throwIfError(await supabase
+  .from('suppliers')
+  .update(payload)
+  .eq('id', id)
+  .select()
+  .single()));
+
+const remoteDeleteSupplier = async (id) => throwIfError(await supabase.from('suppliers').delete().eq('id', id));
+
+const applyQueuedMutation = async ({ table, operation, id, payload }) => {
+  if (table === 'parts') {
+    if (operation === 'add') return remoteAddPart(payload);
+    if (operation === 'update') return remoteUpdatePart(id, payload);
+    return remoteDeletePart(id);
+  }
+  if (table === 'sales') {
+    if (operation === 'add') return remoteAddSale(payload);
+    return remoteDeleteSale(id);
+  }
+  if (table === 'suppliers') {
+    if (operation === 'add') return remoteAddSupplier(payload);
+    if (operation === 'update') return remoteUpdateSupplier(id, payload);
+    return remoteDeleteSupplier(id);
+  }
+  throw new Error(`Unsupported queued mutation: ${table}/${operation}`);
+};
+
+export const initialiseOfflineSync = () => startOfflineSync(applyQueuedMutation);
+
+const queueWhenOffline = async ({ table, operation, id, payload, localRecord, request }) => {
+  if (isOffline()) return queueMutation({ table, operation, id, payload, localRecord });
+
+  try {
+    const record = await request();
+    if (operation === 'delete') {
+      await removeCachedRecord(table, id);
+      return record;
+    }
+    await upsertCachedRecord(table, record);
+    return record;
+  } catch (error) {
+    if (!isNetworkError(error)) throw error;
+    return queueMutation({ table, operation, id, payload, localRecord });
+  }
+};
+
+const fetchWithCache = async ({ table, request }) => {
+  try {
+    const records = await request();
+    await replaceCachedTable(table, records);
+    return records;
+  } catch (error) {
+    const snapshot = await getCachedSnapshot();
+    if (isOffline() || snapshot[table]?.length) return snapshot[table] || [];
+    console.error(`Unable to fetch ${table}:`, error);
     return [];
   }
-  
-  // Transform snake_case to camelCase for consistency with your app
-  return data.map(part => ({
-    id: part.id,
-    partNumber: part.part_number,
-    name: part.name,
-    category: part.category,
-    brand: part.brand,
-    purchasePrice: parseFloat(part.purchase_price),
-    sellingPrice: parseFloat(part.selling_price),
-    stock: part.stock,
-    reorderLevel: part.reorder_level,
-    supplier: part.supplier,
-    location: part.location
-  }));
 };
 
-export const addPart = async (partData) => {
-  console.log(' Received partData:', partData);
-  console.log(' Formatted for Supabase:', {
-    part_number: partData.partNumber,
-    name: partData.name,
-    category: partData.category,
-    brand: partData.brand,
-    purchase_price: partData.purchasePrice,
-    selling_price: partData.sellingPrice,
-    stock: partData.stock,
-    reorder_level: partData.reorderLevel,
-    supplier: partData.supplier,
-    location: partData.location
-  });
+export const fetchCategories = () => fetchWithCache({
+  table: 'categories',
+  request: async () => throwIfError(await supabase.from('categories').select('*').order('name')),
+});
 
-  const { data, error } = await supabase
-    .from('parts')
-    .insert([{
-      part_number: partData.partNumber,
-      name: partData.name,
-      category: partData.category,
-      brand: partData.brand || '',
-      purchase_price: partData.purchasePrice,
-      selling_price: partData.sellingPrice,
-      stock: partData.stock,
-      reorder_level: partData.reorderLevel,
-      supplier: partData.supplier || '',
-      location: partData.location || ''
-    }])
-    .select()
-    .single();
-  
-  if (error) {
-    console.error(' Supabase error:', error);
-    throw error;
-  }
-  
-  console.log(' Supabase returned:', data);
-  
-  return {
-    id: data.id,
-    partNumber: data.part_number,
-    name: data.name,
-    category: data.category,
-    brand: data.brand,
-    purchasePrice: parseFloat(data.purchase_price),
-    sellingPrice: parseFloat(data.selling_price),
-    stock: data.stock,
-    reorderLevel: data.reorder_level,
-    supplier: data.supplier,
-    location: data.location
-  };
-};
+export const fetchParts = () => fetchWithCache({
+  table: 'parts',
+  request: async () => (throwIfError(await supabase.from('parts').select('*').order('name'))).map(partFromRow),
+});
 
-export const updatePart = async (id, partData) => {
-  console.log(' updatePart called with:', { id, partData });
-  
-  const updatePayload = {
-    part_number: partData.partNumber,
-    name: partData.name,
-    category: partData.category,
-    brand: partData.brand || '',
-    purchase_price: parseFloat(partData.purchasePrice),
-    selling_price: parseFloat(partData.sellingPrice),
-    stock: parseInt(partData.stock), //  ENSURE INTEGER
-    reorder_level: parseInt(partData.reorderLevel),
-    supplier: partData.supplier || '',
-    location: partData.location || ''
-  };
-  
-  console.log(' Sending to Supabase:', updatePayload);
-  
-  const { data, error } = await supabase
-    .from('parts')
-    .update(updatePayload)
-    .eq('id', id)
-    .select()
-    .single();
-  
-  if (error) {
-    console.error(' Supabase update failed:', error);
-    console.error('Error code:', error.code);
-    console.error('Error message:', error.message);
-    console.error('Error details:', error.details);
-    throw error;
-  }
-  
-  console.log(' Supabase returned updated data:', data);
-  
-  const transformedData = {
-    id: data.id,
-    partNumber: data.part_number,
-    name: data.name,
-    category: data.category,
-    brand: data.brand,
-    purchasePrice: parseFloat(data.purchase_price),
-    sellingPrice: parseFloat(data.selling_price),
-    stock: parseInt(data.stock), //  ENSURE INTEGER
-    reorderLevel: parseInt(data.reorder_level),
-    supplier: data.supplier,
-    location: data.location
-  };
-  
-  console.log(' Transformed data being returned:', transformedData);
-  return transformedData;
-};
-
-export const deletePart = async (id) => {
-  const { error } = await supabase
-    .from('parts')
-    .delete()
-    .eq('id', id);
-  
-  if (error) {
-    console.error('Error deleting part:', error);
-    throw error;
-  }
-};
-
-// ============================================
-// SALES
-// ============================================
-export const fetchSales = async () => {
-  const { data, error } = await supabase
+export const fetchSales = () => fetchWithCache({
+  table: 'sales',
+  request: async () => (throwIfError(await supabase
     .from('sales')
     .select('*')
     .order('date', { ascending: false })
-    .order('time', { ascending: false });
-  
-  if (error) {
-    console.error('Error fetching sales:', error);
-    return [];
-  }
-  
-  return data.map(sale => ({
-    id: sale.id,
-    date: sale.date,
-    time: sale.time,
-    partNumber: sale.part_number,
-    partName: sale.part_name,
-    quantity: sale.quantity,
-    purchasePrice: parseFloat(sale.purchase_price),
-    sellingPrice: parseFloat(sale.selling_price),
-    total: parseFloat(sale.total),
-    profit: parseFloat(sale.profit),
-    customer: sale.customer,
-    soldBy: sale.sold_by
-  }));
+    .order('time', { ascending: false }))).map(saleFromRow),
+});
+
+export const fetchSuppliers = () => fetchWithCache({
+  table: 'suppliers',
+  request: async () => throwIfError(await supabase.from('suppliers').select('*').order('name')),
+});
+
+export const addPart = async (part) => {
+  const id = part.id || createId();
+  const payload = partPayload(part, id);
+  return queueWhenOffline({
+    table: 'parts', operation: 'add', id, payload, localRecord: partFromPayload(payload),
+    request: () => remoteAddPart(payload),
+  });
 };
 
-export const addSale = async (saleData) => {
-  const { data, error } = await supabase
-    .from('sales')
-    .insert([{
-      date: saleData.date,
-      time: saleData.time,
-      part_number: saleData.partNumber,
-      part_name: saleData.partName,
-      quantity: saleData.quantity,
-      purchase_price: saleData.purchasePrice,
-      selling_price: saleData.sellingPrice,
-      total: saleData.total,
-      profit: saleData.profit,
-      customer: saleData.customer,
-      sold_by: saleData.soldBy
-    }])
-    .select()
-    .single();
-  
-  if (error) {
-    console.error('Error adding sale:', error);
-    throw error;
-  }
-  
-  return {
-    id: data.id,
-    date: data.date,
-    time: data.time,
-    partNumber: data.part_number,
-    partName: data.part_name,
-    quantity: data.quantity,
-    purchasePrice: parseFloat(data.purchase_price),
-    sellingPrice: parseFloat(data.selling_price),
-    total: parseFloat(data.total),
-    profit: parseFloat(data.profit),
-    customer: data.customer,
-    soldBy: data.sold_by
-  };
+export const updatePart = async (id, part) => {
+  const payload = partPayload(part, id);
+  return queueWhenOffline({
+    table: 'parts', operation: 'update', id, payload, localRecord: partFromPayload(payload),
+    request: () => remoteUpdatePart(id, payload),
+  });
 };
 
-export const deleteSale = async (id) => {
-  const { error } = await supabase
-    .from('sales')
-    .delete()
-    .eq('id', id);
-  
-  if (error) {
-    console.error('Error deleting sale:', error);
-    throw error;
-  }
+export const deletePart = (id) => queueWhenOffline({
+  table: 'parts', operation: 'delete', id, payload: { id }, localRecord: null,
+  request: () => remoteDeletePart(id),
+});
+
+export const addSale = async (sale) => {
+  const id = sale.id || createId();
+  const payload = salePayload(sale, id);
+  return queueWhenOffline({
+    table: 'sales', operation: 'add', id, payload, localRecord: saleFromPayload(payload),
+    request: () => remoteAddSale(payload),
+  });
 };
 
-// ============================================
-// SUPPLIERS
-// ============================================
-export const fetchSuppliers = async () => {
-  const { data, error } = await supabase
-    .from('suppliers')
-    .select('*')
-    .order('name');
-  
-  if (error) {
-    console.error('Error fetching suppliers:', error);
-    return [];
-  }
-  return data;
+export const deleteSale = (id) => queueWhenOffline({
+  table: 'sales', operation: 'delete', id, payload: { id }, localRecord: null,
+  request: () => remoteDeleteSale(id),
+});
+
+export const addSupplier = async (supplier) => {
+  const id = supplier.id || createId();
+  const payload = supplierPayload(supplier, id);
+  return queueWhenOffline({
+    table: 'suppliers', operation: 'add', id, payload, localRecord: supplierFromPayload(payload),
+    request: () => remoteAddSupplier(payload),
+  });
 };
 
-export const addSupplier = async (supplierData) => {
-  const { data, error } = await supabase
-    .from('suppliers')
-    .insert([supplierData])
-    .select()
-    .single();
-  
-  if (error) {
-    console.error('Error adding supplier:', error);
-    throw error;
-  }
-  return data;
+export const updateSupplier = async (id, supplier) => {
+  const payload = supplierPayload(supplier, id);
+  return queueWhenOffline({
+    table: 'suppliers', operation: 'update', id, payload, localRecord: supplierFromPayload(payload),
+    request: () => remoteUpdateSupplier(id, payload),
+  });
 };
 
-export const updateSupplier = async (id, supplierData) => {
-  const { data, error } = await supabase
-    .from('suppliers')
-    .update(supplierData)
-    .eq('id', id)
-    .select()
-    .single();
-  
-  if (error) {
-    console.error('Error updating supplier:', error);
-    throw error;
-  }
-  return data;
-};
-
-export const deleteSupplier = async (id) => {
-  const { error } = await supabase
-    .from('suppliers')
-    .delete()
-    .eq('id', id);
-  
-  if (error) {
-    console.error('Error deleting supplier:', error);
-    throw error;
-  }
-};
+export const deleteSupplier = (id) => queueWhenOffline({
+  table: 'suppliers', operation: 'delete', id, payload: { id }, localRecord: null,
+  request: () => remoteDeleteSupplier(id),
+});

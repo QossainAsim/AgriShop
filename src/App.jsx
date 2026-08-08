@@ -5,11 +5,9 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { Search, Plus, Download, Upload, Package, ShoppingCart, Users, TrendingUp, AlertTriangle, Edit2, Trash2, X, Home, Boxes, DollarSign, BarChart3, Printer, Receipt, FileDown, FileUp, Calculator  } from 'lucide-react';
-import * as XLSX from 'xlsx';
 import Login from "./Login";
 import ChangePassword from "./ChangePassword";
 import { auth } from './firebase';
-import { supabase } from './supabaseClient'
 // Add these imports
 import { useDeviceDetection } from './hooks/useDeviceDetection';
 import MobileLayout from './components/mobile/MobileLayout';
@@ -32,8 +30,15 @@ import {
   fetchSuppliers,
   addSupplier as addSupplierToDb,
   updateSupplier as updateSupplierInDb,
-  deleteSupplier as deleteSupplierFromDb
+  deleteSupplier as deleteSupplierFromDb,
+  initialiseOfflineSync
 } from './supabaseHelpers';
+
+let xlsxModule;
+const loadXlsx = () => {
+  xlsxModule ??= import('xlsx');
+  return xlsxModule;
+};
 
 // ========== PART MODAL (Add/Edit Material) ==========
 const PartModal = ({ editItem, categories, suppliers, onClose, onSave }) => {
@@ -1590,7 +1595,7 @@ const SalesView = ({
               </tr>
             </thead>
             <tbody>
-              {sales.slice().reverse().map((sale, index) => {
+              {sales.slice().reverse().map((sale) => {
                 const isToday = sale.date === new Date().toISOString().split('T')[0];
                 return (
                   <tr
@@ -2628,6 +2633,9 @@ const CommissionShopManagement = () => {
   const [showChangePassword, setShowChangePassword] = useState(false);
   const [loading, setLoading] = useState(true);
   const isMobile = useDeviceDetection();
+  const syncMessage = (result, message) => result?.pendingSync
+    ? `${message}\n\nSaved on this device. It will sync automatically when the internet returns.`
+    : message;
 
   // ========== INDEXEDDB FUNCTIONS ==========
   // ========== SUPABASE DATA LOADING ==========
@@ -2656,8 +2664,17 @@ const loadFromSupabase = async () => {
 };
   // ========== USEEFFECTS ==========
   useEffect(() => {
-  loadFromSupabase();
-}, []);
+    const refreshAfterSync = () => loadFromSupabase();
+
+    initialiseOfflineSync();
+    const initialLoad = window.setTimeout(loadFromSupabase, 0);
+    window.addEventListener('commission-shop-sync-complete', refreshAfterSync);
+
+    return () => {
+      window.clearTimeout(initialLoad);
+      window.removeEventListener('commission-shop-sync-complete', refreshAfterSync);
+    };
+  }, []);
 
 // No more auto-save useEffect needed! Supabase saves immediately on each action
 
@@ -2766,7 +2783,8 @@ const loadFromSupabase = async () => {
   // ========== EXCEL IMPORT/EXPORT FUNCTIONS ==========
 
   // NEW: Function to save directly to your specified folder
-  const saveExcelToDesktop = (workbook, filename) => {
+  const saveExcelToDesktop = async (workbook, filename) => {
+    const XLSX = await loadXlsx();
     // Generate the Excel file as a blob
     const wbout = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
     const blob = new Blob([wbout], { type: 'application/octet-stream' });
@@ -2793,8 +2811,9 @@ const loadFromSupabase = async () => {
     if (!file) return;
 
     const reader = new FileReader();
-    reader.onload = (evt) => {
+    reader.onload = async (evt) => {
       try {
+        const XLSX = await loadXlsx();
         const wb = XLSX.read(evt.target.result, { type: 'binary' });
         const ws = wb.Sheets[wb.SheetNames[0]];
         const data = XLSX.utils.sheet_to_json(ws);
@@ -2855,7 +2874,8 @@ const loadFromSupabase = async () => {
   };
 
   // Export Complete Database
-  const handleExportComplete = () => {
+  const handleExportComplete = async () => {
+    const XLSX = await loadXlsx();
     const wb = XLSX.utils.book_new();
 
     // Material Book Sheet
@@ -2924,7 +2944,8 @@ const loadFromSupabase = async () => {
   };
 
   // Export Material Book Only
-  const handleExportInventory = () => {
+  const handleExportInventory = async () => {
+    const XLSX = await loadXlsx();
     const wb = XLSX.utils.book_new();
     const data = parts.map(p => ({
       'Material Code': p.partNumber,
@@ -2948,7 +2969,8 @@ const loadFromSupabase = async () => {
   };
 
   // Export Selling Accounts Only
-  const handleExportSales = () => {
+  const handleExportSales = async () => {
+    const XLSX = await loadXlsx();
     const wb = XLSX.utils.book_new();
     const data = sales.map(s => ({
       'Date': s.date,
@@ -2971,7 +2993,8 @@ const loadFromSupabase = async () => {
   };
 
   // Export Parties Only
-  const handleExportSuppliers = () => {
+  const handleExportSuppliers = async () => {
+    const XLSX = await loadXlsx();
     const wb = XLSX.utils.book_new();
     const data = suppliers.map(s => ({
       'Party Name': s.name,
@@ -3003,7 +3026,7 @@ const loadFromSupabase = async () => {
     console.log(' Part added successfully:', newPart);
     setParts([...parts, newPart]);
     setShowModal(false);
-    alert('Part added successfully!');
+    alert(syncMessage(newPart, 'Part added successfully!'));
   } catch (error) {
     console.error(' Complete error object:', error);
     console.error(' Error message:', error.message);
@@ -3020,7 +3043,7 @@ const handleEditPart = async (formData) => {
     setParts(parts.map(p => p.id === editItem.id ? updatedPart : p));
     setShowModal(false);
     setEditItem(null);
-    alert('Part updated successfully!');
+    alert(syncMessage(updatedPart, 'Part updated successfully!'));
   } catch (error) {
     console.error('Error updating part:', error);
     alert('Failed to update part. Please try again.');
@@ -3030,9 +3053,9 @@ const handleEditPart = async (formData) => {
 const handleDeletePart = async (id) => {
   if (window.confirm('Are you sure you want to delete this part?\n\nThis action cannot be undone.')) {
     try {
-      await deletePartFromDb(id);
+      const result = await deletePartFromDb(id);
       setParts(parts.filter(p => p.id !== id));
-      alert('Part deleted successfully!');
+      alert(syncMessage(result, 'Part deleted successfully!'));
     } catch (error) {
       console.error('Error deleting part:', error);
       alert('Failed to delete part. Please try again.');
@@ -3140,7 +3163,7 @@ const handleDeletePart = async (id) => {
       setShowReceipt(true);
 
       console.log(` Multi-item sale completed! ${formData.items.length} items sold.`);
-      alert(` Sale recorded successfully!\n\n${formData.items.length} items sold to ${formData.customer}`);
+      alert(syncMessage(newSales.find((sale) => sale.pendingSync), `Sale recorded successfully!\n\n${formData.items.length} items sold to ${formData.customer}`));
 
     } catch (error) {
       console.error(' Multi-item sale failed:', error);
@@ -3212,6 +3235,7 @@ const handleDeletePart = async (id) => {
       setLastSale(newSale);
       setShowModal(false);
       setShowReceipt(true);
+      alert(syncMessage(newSale, 'Sale recorded successfully!'));
 
     } catch (error) {
       console.error(' Sale failed:', error);
@@ -3225,10 +3249,10 @@ const handleDeleteSale = async (saleId) => {
   if (window.confirm('Delete this sale?\n\n Warning: Quantity will NOT be restored.\n\nThis action cannot be undone.')) {
     try {
       console.log(' Deleting sale:', saleId);
-      await deleteSaleFromDb(saleId);
+      const result = await deleteSaleFromDb(saleId);
       setSales(sales.filter(s => s.id !== saleId));
       console.log(' Sale deleted successfully!');
-      alert(' Sale deleted successfully!');
+      alert(syncMessage(result, 'Sale deleted successfully!'));
     } catch (error) {
       console.error(' Error deleting sale:', error);
       alert(`Failed to delete sale!\n\nError: ${error.message}`);
@@ -3243,7 +3267,7 @@ const handleDeleteSale = async (saleId) => {
     const newSupplier = await addSupplierToDb(formData);
     setSuppliers([...suppliers, newSupplier]);
     setShowModal(false);
-    alert('Party added successfully!');
+    alert(syncMessage(newSupplier, 'Party added successfully!'));
   } catch (error) {
     console.error('Error adding supplier:', error);
     alert('Failed to add supplier. Please try again.');
@@ -3256,7 +3280,7 @@ const handleEditSupplier = async (formData) => {
     setSuppliers(suppliers.map(s => s.id === editItem.id ? updatedSupplier : s));
     setShowModal(false);
     setEditItem(null);
-    alert('Party updated successfully!');
+    alert(syncMessage(updatedSupplier, 'Party updated successfully!'));
   } catch (error) {
     console.error('Error updating supplier:', error);
     alert('Failed to update supplier. Please try again.');
@@ -3274,9 +3298,9 @@ const handleDeleteSupplier = async (id) => {
 
   if (window.confirm('Delete this supplier?\n\nThis action cannot be undone.')) {
     try {
-      await deleteSupplierFromDb(id);
+      const result = await deleteSupplierFromDb(id);
       setSuppliers(suppliers.filter(s => s.id !== id));
-      alert('Party deleted successfully!');
+      alert(syncMessage(result, 'Party deleted successfully!'));
     } catch (error) {
       console.error('Error deleting supplier:', error);
       alert('Failed to delete supplier. Please try again.');

@@ -1,52 +1,33 @@
-# Commission Shop Management System
+# Commission Shop
 
-React + Vite app for managing a commission shop: material book, cash book amounts, party accounts, sales/deals, and commission tracking.
+Fast, offline-friendly crop, cash, ledger, and commission management for an agricultural commission shop.
 
-## Local Setup
+## Setup
 
-```powershell
-npm.cmd install
-npm.cmd run dev
-```
+1. Copy `.env.example` to `.env` and add the Supabase Project URL and Publishable key.
+2. In Supabase SQL Editor, run these files in order:
+   - `supabase-reset.sql` — only for the empty project containing the old test tables
+   - `supabase-schema.sql`
+   - `supabase-finance-update.sql`
+   - `supabase-crop-update.sql`
+   - `supabase-complete-workflows.sql`
+3. Enable Supabase Authentication email sign-in, create the first owner user, and disable public email sign-ups. Add future staff from Supabase Authentication → Users so only shop-approved people can access records.
+4. Run `npm.cmd run dev`.
 
-Open the URL shown by Vite, usually:
+## What it manages
 
-```text
-http://localhost:5173
-```
+- Farmers, buyers, lenders, labourers, and employees
+- Crops in maund, kilograms, or bags
+- Own harvest and crop purchased from farmers
+- Cash received, paid, advances, borrowings, and repayments
+- Crop sales for cash or credit
+- Labour, salary, market fees, transport, rent, and other expenses
+- Party balances, cash in hand, stock, and trial-balance reporting
 
-## New Firebase Project
+## Offline use
 
-1. Go to Firebase Console and create a new project.
-2. Add a Web App.
-3. Enable Authentication > Sign-in method > Email/Password.
-4. Copy the Firebase web config values into `.env`.
+The application shell works offline. Cash actions are safely placed in a local queue when the network is unavailable and submitted when the device reconnects. Keep the browser’s site data intact until pending records have synced.
 
-Required Firebase values:
+## Vercel
 
-```env
-VITE_FIREBASE_API_KEY=
-VITE_FIREBASE_AUTH_DOMAIN=
-VITE_FIREBASE_PROJECT_ID=
-VITE_FIREBASE_STORAGE_BUCKET=
-VITE_FIREBASE_MESSAGING_SENDER_ID=
-VITE_FIREBASE_APP_ID=
-VITE_FIREBASE_MEASUREMENT_ID=
-```
-
-## New Supabase Project
-
-1. Create a new Supabase project.
-2. Open SQL Editor.
-3. Run the contents of `supabase-schema.sql`.
-4. Go to Project Settings > API.
-5. Copy Project URL and anon public key into `.env`.
-
-Required Supabase values:
-
-```env
-VITE_SUPABASE_URL=
-VITE_SUPABASE_ANON_KEY=
-```
-
-Use `.env.example` as the template. The real `.env` file is ignored by Git so private project keys do not get committed.
+Import the repository into Vercel. It detects Vite automatically. Add `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` to Vercel Project Settings → Environment Variables for Production and Preview, then redeploy. Never add a database password, secret key, or `service_role` key to Vercel frontend variables.
