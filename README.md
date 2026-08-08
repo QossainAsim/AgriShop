@@ -28,6 +28,10 @@ Fast, offline-friendly crop, cash, ledger, and commission management for an agri
 
 The application shell works offline. Cash actions are safely placed in a local queue when the network is unavailable and submitted when the device reconnects. Keep the browser’s site data intact until pending records have synced.
 
+## Individual private shops
+
+Before sharing the app publicly, run `supabase-individual-shops.sql` after the existing SQL files. It clears the current test business records and changes the database so every authenticated user gets a separate private shop. Enable Email sign-up and Confirm email in Supabase Authentication.
+
 ## Vercel
 
 Import the repository into Vercel. It detects Vite automatically. Add `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` to Vercel Project Settings → Environment Variables for Production and Preview, then redeploy. Never add a database password, secret key, or `service_role` key to Vercel frontend variables.

@@ -9,6 +9,8 @@ export function configureAgriRpc(fn) {
 }
 
 export async function postRpc(name, args) {
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session?.user?.id) return { data: null, error: { message: 'Please sign in before saving an entry.' } };
   if (!offline()) {
     try {
       const result = await remoteRpc(name, args);
@@ -22,7 +24,7 @@ export async function postRpc(name, args) {
     }
   }
   try {
-    await enqueueMutation({ table: 'agri_rpc', operation: 'rpc', payload: { name, args } });
+    await enqueueMutation({ table: 'agri_rpc', operation: 'rpc', userId: session.user.id, payload: { name, args } });
     return { data: null, error: null, pending: true };
   } catch (error) {
     return { data: null, error: { message: `Could not save locally: ${error?.message || 'unknown error'}` } };
@@ -39,7 +41,9 @@ export function enableAgriSync() {
 
 export async function flushAgriQueue() {
   if (offline()) return;
-  for (const mutation of await getPendingMutations()) {
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session?.user?.id) return;
+  for (const mutation of await getPendingMutations(session.user.id)) {
     if (mutation.table !== 'agri_rpc' || mutation.operation !== 'rpc') continue;
     const { error } = await remoteRpc(mutation.payload.name, mutation.payload.args);
     if (error) return;

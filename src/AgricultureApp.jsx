@@ -21,6 +21,8 @@ export default function AgricultureApp() {
   const [error, setError] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [authMode, setAuthMode] = useState('signin');
+  const [authNotice, setAuthNotice] = useState('');
   const [data, setData] = useState({ parties: [], products: [], cash: [], balances: [], stock: [], cashAccounts: [] });
   const [party, setParty] = useState({ name: '', phone: '', roles: ['farmer'], notes: '' });
   const [product, setProduct] = useState({ name: '', default_unit: 'maund', bag_weight_kg: '', humidity_percent: '', minimum_stock_kg: '' });
@@ -51,9 +53,17 @@ export default function AgricultureApp() {
   }, []);
 
   const signIn = async (event) => {
-    event.preventDefault(); setError('');
+    event.preventDefault(); setError(''); setAuthNotice('');
     const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
     if (signInError) setError('Login failed. Check your email and password.');
+  };
+  const signUp = async (event) => {
+    event.preventDefault(); setError(''); setAuthNotice('');
+    if (password.length < 8) return setError('Use a password with at least 8 characters.');
+    const { error: signUpError } = await supabase.auth.signUp({ email, password, options: { emailRedirectTo: window.location.origin } });
+    if (signUpError) return setError(signUpError.message);
+    setAuthNotice('Account created. Check your email to confirm it, then sign in.');
+    setAuthMode('signin');
   };
   const addParty = async (event) => {
     event.preventDefault(); setError('');
@@ -116,7 +126,7 @@ export default function AgricultureApp() {
     pay: data.balances.reduce((sum, item) => sum + Number(item.amount_to_pay), 0),
   }), [data]);
 
-  if (!session) return <Login {...{ email, password, setEmail, setPassword, signIn, error }} />;
+  if (!session) return <Login {...{ email, password, setEmail, setPassword, authMode, setAuthMode, signIn, signUp, error, authNotice }} />;
   const chooseView = (id) => { setView(id); setDrawerOpen(false); };
   return <main className="min-h-screen bg-[#f6f4ed] text-slate-900">
     <header className="sticky top-0 z-30 border-b border-white/10 bg-slate-950 text-white shadow-lg">
@@ -131,7 +141,7 @@ export default function AgricultureApp() {
   </main>;
 }
 
-function Login({ email, password, setEmail, setPassword, signIn, error }) { return <main className="grid min-h-screen place-items-center bg-slate-950 p-5"><form onSubmit={signIn} className="w-full max-w-md rounded-3xl bg-white p-8 shadow-2xl"><Leaf className="mb-5 h-11 w-11 text-emerald-700" /><p className="font-bold text-emerald-700">ABCS</p><h1 className="text-2xl font-bold">Welcome back</h1><p className="mb-6 mt-2 text-sm text-slate-500">Sign in to manage your crop and cash records.</p>{error && <p className="mb-3 text-sm text-rose-600">{error}</p>}<input required type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email address" className="mb-3 w-full rounded-xl border p-3" /><input required type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Password" className="mb-5 w-full rounded-xl border p-3" /><button className="w-full rounded-xl bg-emerald-700 p-3 font-bold text-white hover:bg-emerald-800">Sign in</button></form></main>; }
+function Login({ email, password, setEmail, setPassword, authMode, setAuthMode, signIn, signUp, error, authNotice }) { const isSignUp = authMode === 'signup'; return <main className="grid min-h-screen place-items-center bg-slate-950 p-5"><form onSubmit={isSignUp ? signUp : signIn} className="w-full max-w-md rounded-3xl bg-white p-8 shadow-2xl"><Leaf className="mb-5 h-11 w-11 text-emerald-700" /><p className="font-bold text-emerald-700">ABCS</p><h1 className="text-2xl font-bold">{isSignUp ? 'Create your private shop' : 'Welcome back'}</h1><p className="mb-6 mt-2 text-sm text-slate-500">{isSignUp ? 'Your records will be visible only to your account.' : 'Sign in to manage your crop and cash records.'}</p>{error && <p className="mb-3 rounded-xl bg-rose-50 p-3 text-sm text-rose-700">{error}</p>}{authNotice && <p className="mb-3 rounded-xl bg-emerald-50 p-3 text-sm text-emerald-800">{authNotice}</p>}<input required type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email address" className="mb-3 w-full rounded-xl border p-3" /><input required minLength="8" type="password" autoComplete={isSignUp ? 'new-password' : 'current-password'} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Password" className="mb-5 w-full rounded-xl border p-3" /><button className="w-full rounded-xl bg-emerald-700 p-3 font-bold text-white hover:bg-emerald-800">{isSignUp ? 'Create my shop' : 'Sign in'}</button><button type="button" onClick={() => setAuthMode(isSignUp ? 'signin' : 'signup')} className="mt-4 w-full text-sm font-semibold text-emerald-800 underline">{isSignUp ? 'Already have an account? Sign in' : 'New user? Create your private shop'}</button></form></main>; }
 
 function Content({ view, data, totals, party, setParty, product, setProduct, productNotice, editingPartyId, editingProductId, addParty, addProduct, editParty, editProduct, deleteParty, deleteProduct, reload, chooseView }) {
   if (view === 'parties') return <PeoplePanel {...{ data, party, setParty, editingPartyId, addParty, editParty, deleteParty }} />;

@@ -99,11 +99,11 @@ export const enqueueMutation = async (mutation) => {
   }));
 };
 
-export const getPendingMutations = async () => {
+export const getPendingMutations = async (userId) => {
   const database = await openDatabase();
   const transaction = database.transaction(MUTATION_STORE, 'readonly');
   const mutations = await requestResult(transaction.objectStore(MUTATION_STORE).getAll());
-  return mutations.sort((first, second) => first.id - second.id);
+  return mutations.filter((mutation) => !userId || mutation.userId === userId).sort((first, second) => first.id - second.id);
 };
 
 export const removePendingMutation = async (id) => {
