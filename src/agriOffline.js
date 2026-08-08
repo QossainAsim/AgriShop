@@ -3,6 +3,7 @@ import { enqueueMutation, getPendingMutations, removePendingMutation } from './o
 
 const offline = () => typeof navigator !== 'undefined' && !navigator.onLine;
 let remoteRpc = (...args) => supabase.rpc(...args);
+const announce = (message) => window.dispatchEvent(new CustomEvent('abcs:toast', { detail: { message } }));
 
 export function configureAgriRpc(fn) {
   remoteRpc = fn;
@@ -14,7 +15,10 @@ export async function postRpc(name, args) {
   if (!offline()) {
     try {
       const result = await remoteRpc(name, args);
-      if (!result.error || !/network|fetch|timeout/i.test(result.error.message || '')) return result;
+      if (!result.error || !/network|fetch|timeout/i.test(result.error.message || '')) {
+        if (!result.error) announce('Saved successfully.');
+        return result;
+      }
     } catch (error) {
       // A failed fetch is handled below as an offline entry.  It must not escape
       // from a form event handler, otherwise the user sees no feedback at all.
@@ -25,6 +29,7 @@ export async function postRpc(name, args) {
   }
   try {
     await enqueueMutation({ table: 'agri_rpc', operation: 'rpc', userId: session.user.id, payload: { name, args } });
+    announce('Saved offline. It will sync automatically.');
     return { data: null, error: null, pending: true };
   } catch (error) {
     return { data: null, error: { message: `Could not save locally: ${error?.message || 'unknown error'}` } };
