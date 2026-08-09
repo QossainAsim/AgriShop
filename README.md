@@ -2,6 +2,13 @@
 
 Fast, offline-friendly crop, cash, ledger, and commission management for an agricultural commission shop.
 
+## Team documentation
+
+- [Architecture](ARCHITECTURE.md) — frontend, Supabase, Vercel, authentication, offline sync, deployment, and security boundaries.
+- [Database guide](DATABASE.md) — schema, relationships, RLS ownership model, views, accounting RPCs, and migration order.
+- [Functionality guide](FUNCTIONALITY.md) — every user-facing feature, automatic accounting effects, examples, edit/delete policy, and current limitations.
+- [Production security checklist](PRODUCTION_SECURITY_CHECKLIST.md) — dashboard settings required before broad public use.
+
 ## Setup
 
 1. Copy `.env.example` to `.env` and add the Supabase Project URL and Publishable key.
